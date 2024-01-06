@@ -1,0 +1,253 @@
+'***************************************************************************
+'FFT演算クラス（一部改変）
+' 参考：https://qiita.com/takeru0x5569/items/b503e04d5dde3c3fde78
+'***************************************************************************
+'////////////////////////////////////////////////
+'ユーザー定義型
+'////////////////////////////////////////////////
+'複素数型
+
+Private Type Complex
+    re As Double    '実数部
+    Im As Double    '虚数部
+End Type
+
+'FFT解析のパラメータをまとめた構造体
+Private Type Parameter
+    InputDataSize  As Long      '受け取ったデータのサイズ（２のべき乗でなくても良い）
+    AnalysisPoints As Long      '解析対象データ数（２のべき乗に制限したデータ点数）
+    Radix As Long               '基数（２の何乗なのかを示す数）
+    TwiddleFactor() As Complex  '回転因子の配列（基数に応じて生成する）
+End Type
+
+'////////////////////////////////////////////////
+'クラス変数
+'////////////////////////////////////////////////
+Private SignalData() As Complex      '入力信号データ
+Private Param As Parameter          'FFT解析に必要なパラメータ
+
+'============================================================================================
+'入力信号データを内部変数にセットし，データ数から決定可能なFFT解析パラメータを決定する
+'============================================================================================
+Public Sub SetSignalData(ByVal inputDataI, ByVal inputDataQ)
+    
+    '入力データ長
+    Param.InputDataSize = UBound(inputDataI) + 1
+    Debug.Print "Param.InputDataSize: " & Param.InputDataSize
+    
+    '入力データをクラス変数に保持
+    ReDim SignalData(Param.InputDataSize - 1)
+    For I = 0 To Param.InputDataSize - 1
+        SignalData(I).re = inputDataI(I)
+        SignalData(I).Im = inputDataQ(I)
+    Next
+    
+    '基数を求める
+    Param.Radix = RadixCalc(Param.InputDataSize)
+    Debug.Print "Param.Radix : " & Param.Radix
+    
+    '解析に有効な２のべき乗のデータポイント数を求める
+    Param.AnalysisPoints = 2 ^ Param.Radix
+     Debug.Print "Param.AnalysisPoints : " & Param.AnalysisPoints
+    '基数から回転因子を作成
+    Param.TwiddleFactor = fTwiddleFactor(Param.Radix)
+End Sub
+
+'============================================================================================
+'FFT演算実行
+'============================================================================================
+Public Function Run()
+    Dim rvsCmp() As Complex      '入力データをビットリバースした複素数の配列
+    Dim bufData() As Complex
+    Dim outData() As Complex
+    Dim absData() As Double
+    Dim stage As Long
+    '----------------------------------------------
+    'ビットリバース処理と複素数化
+    '----------------------------------------------
+    ReDim rvsCmp(Param.AnalysisPoints - 1)
+    
+    For I = 0 To Param.AnalysisPoints - 1
+        With rvsCmp(BitReverse(I, Param.Radix))
+            .re = SignalData(I).re
+            .Im = SignalData(I).Im
+        End With
+    Next
+    
+    '----------------------------------------------
+    'バタフライ演算
+    '----------------------------------------------
+    ReDim outData(Param.AnalysisPoints - 1)
+    bufData = rvsCmp
+    '基数分のステージ繰り返し
+    For stage = 1 To Param.Radix
+        '回転因子の乗算（バタフライ演算の前処理）
+        outData = TwiddleFactorMulti(bufData, Param.Radix, stage, Param.TwiddleFactor)
+        'バタフライ演算
+        bufData = ButterflyOperation(outData, Param.Radix, stage)
+    Next
+        
+    '----------------------------------------------
+    '  複素数を絶対値に変換（二乗平均）
+    '----------------------------------------------
+    ReDim absData(Param.AnalysisPoints - 1)
+    For I = 0 To Param.AnalysisPoints - 1
+        'データ数/2で割って大きさをあわせる
+        absData(I) = Sqr((bufData(I).re) ^ 2 + (bufData(I).Im) ^ 2) / (Param.AnalysisPoints / 2)
+    Next
+    
+    '並び替えた結果を出力する
+    Run = absData
+End Function
+
+'-------------------------------------------------------------------------------------
+'回転因子配列の生成
+' 引数には基数を入れる
+'　戻り値は回転因子の入った複素数型の配列
+'-------------------------------------------------------------------------------------
+Private Function fTwiddleFactor(ByVal iRadix As Long) As Complex()
+    Dim pointNum As Long    'データポイント数
+    Dim twiddle() As Complex '回転因子配列
+    Dim stepVal As Double
+    Dim radian As Double
+    
+    '回転因子のポイント数は２の基数乗
+    pointNum = (2 ^ (iRadix - 1))
+    
+    '半周期＝πをポイント数で割ると位相の分解能が求まる
+    stepVal = WorksheetFunction.Pi() / (pointNum)
+        
+    '回転因子配列の生成
+    ReDim twiddle(pointNum - 1)
+    For I = 0 To pointNum - 1
+        radian = stepVal * I          '角度をずらしてゆく
+        twiddle(I).re = Cos(radian)   '実数
+        twiddle(I).Im = Sin(radian)   '虚数
+    Next
+    
+    '戻り値
+    fTwiddleFactor = twiddle
+End Function
+
+'-------------------------------------------------------------------------------------
+'基数を求める：データ長を下回らない最小の2の冪乗
+'-------------------------------------------------------------------------------------
+Private Function RadixCalc(ByVal dataLen As Long)
+    Dim rdx As Long
+    Dim temp As Long
+    temp = 1
+    rdx = 0
+    Do While temp <= dataLen
+        temp = temp * 2
+        rdx = rdx + 1
+    Loop
+    RadixCalc = rdx - 1
+End Function
+
+'-----------------------------------------------------------------------------------
+'ビット反転:入力された数を２進数で表現したときにMSBからLSBの並び順を逆にする
+' 例：入力 0010b →出力0100b
+'-----------------------------------------------------------------------------------
+Private Function BitReverse(ByVal InputNum As Long, ByVal BitLen As Long) As Long
+    Dim outputNum As Long
+    'ﾋﾞｯﾄ反転動作
+    For I = 0 To BitLen - 1
+        If (InputNum And (2 ^ I)) <> 0 Then
+            outputNum = outputNum + (2 ^ (BitLen - 1 - I))
+        End If
+    Next
+
+    BitReverse = outputNum
+End Function
+
+'-----------------------------------------------------------------------------------
+'バタフライ演算
+'-----------------------------------------------------------------------------------
+Private Function ButterflyOperation(ByRef iData() As Complex, ByVal iRdx As Long, ByVal Stg) As Complex()
+    Dim pear As Long
+    Dim blok As Long
+    Dim I, j, pt As Long
+    
+    Dim rtn() As Complex         '戻り値は複素数型配列
+    ReDim rtn(UBound(iData))    '入力データと同じサイズの戻り値配列サイズを確保
+    
+    pear = 2 ^ (Stg - 1)    '1,2,4,8, ...
+    blok = 2 ^ (iRdx - Stg)
+    
+    'バタフライ演算
+    pt = 0
+    For I = 1 To blok
+        For j = 1 To pear '複素数で加算
+            rtn(pt) = fComplexAdd(iData(pt), iData(pt + pear))
+            pt = pt + 1
+        Next
+        For j = 1 To pear '複素数で減算
+            rtn(pt) = fComplexSub(iData(pt), iData(pt - pear))
+            pt = pt + 1
+        Next
+    Next
+    ButterflyOperation = rtn
+End Function
+
+'----------------------------------------------------------------------------------------------
+'配列に回転因子を掛ける処理，バタフライ演算の前処理
+'----------------------------------------------------------------------------------------------
+Private Function TwiddleFactorMulti(ByRef iData() As Complex, ByVal rdx As Long, ByVal StageNum, ByRef twiddle() As Complex) As Complex()
+    Dim BufTw() As Complex       '回転因子を掛けた結果を入れる複素数型のバッファ配列
+    Dim blok    As Long      'ブロックサイズ：バタフライ演算の塊が何個あるかを示す
+    Dim pear    As Long      'タスキ数：ブロックの中にたすき掛けが何個あるか
+    Dim pt As Long
+    Dim I, j, Ptw As Long
+    
+    blok = 2 ^ (rdx - StageNum)
+    pear = 2 ^ (StageNum - 1)
+    ReDim BufTw(UBound(iData))
+    
+    pt = 0
+    For I = 1 To blok
+        '前半：回転因子乗算なし
+        For j = 1 To pear
+            BufTw(pt) = iData(pt)
+            pt = pt + 1
+        Next
+            
+        '後半：回転因子乗算をする
+        Ptw = 0
+        For j = 1 To pear
+            BufTw(pt) = fComplexMulti(iData(pt), twiddle(Ptw)) '複素数の掛け算
+            Ptw = Ptw + blok    '回転因子のインデックスはブロックサイズ分飛ばす
+            pt = pt + 1
+        Next
+    Next
+    TwiddleFactorMulti = BufTw
+End Function
+
+'--------------------------------------------------------------------------------
+'複素数の演算を実行する関数
+'--------------------------------------------------------------------------------
+'複素数の掛け算
+Private Function fComplexMulti(ByRef A As Complex, ByRef B As Complex) As Complex
+    Dim rtn As Complex
+    rtn.re = (A.re * B.re) - (A.Im * B.Im)
+    rtn.Im = (A.re * B.Im) + (A.Im * B.re)
+    fComplexMulti = rtn
+End Function
+'複素数の足し算
+Private Function fComplexAdd(ByRef A As Complex, ByRef B As Complex) As Complex
+    Dim rtn As Complex
+    rtn.re = A.re + B.re
+    rtn.Im = A.Im + B.Im
+    fComplexAdd = rtn
+End Function
+'複素数の引き算
+Private Function fComplexSub(ByRef A As Complex, ByRef B As Complex) As Complex
+    Dim rtn As Complex
+    rtn.re = A.re - B.re
+    rtn.Im = A.Im - B.Im
+    fComplexSub = rtn
+End Function
+
+
+
+
+
