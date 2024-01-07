@@ -1,0 +1,245 @@
+' FIRフィルタの係数作成
+
+Sub FFT()
+    Range("D1:Q65538").Clear
+    
+    Debug.Print "ーーーーーーーーーーーーーーーーーーーーーーー"
+
+    '///////////////////////////////////////////
+    '  波形作成
+    '///////////////////////////////////////////
+    Dim Pi As Double
+    Pi = Atn(1) * 4 '円周率
+    
+     
+    Dim fs, Ts As Double
+    fs = Range("B2") * 1000000 '  サンプリング周波数
+    Ts = 1 / fs '  サンプリング 周期
+         
+    Dim LenData As Long
+    LenData = Range("B4") '  データ長
+    
+    Dim Data() As Double
+    ReDim Data(LenData - 1)
+    
+    Range("D1") = "サンプル番号"
+    Range("E1") = "サンプル時刻 [ns]"
+    Range("F1") = "サンプル信号"
+    
+    For I = 0 To LenData - 1
+        If I = 0 Then
+            Data(I) = 1
+        Else
+            Data(I) = 0
+        End If
+        Range("D2").Offset(I, 0) = I
+        Range("E2").Offset(I, 0) = I * Ts * 100000000
+        Range("F2").Offset(I, 0) = Data(I)
+    Next
+
+    '///////////////////////////////////////////
+    ' FFT
+    '///////////////////////////////////////////
+
+    Dim FFTbin As Double
+    FFTbin = fs / LenData
+    Debug.Print "FFT ビン: " & FFTbin / 1000000 & " MHz"
+
+    Dim FFT As clsFftBasic
+    Set FFT = New clsFftBasic
+
+    Dim DataRe(), DataIm() As Double
+    ReDim DataRe(LenData - 1), DataIm(LenData - 1)
+    For I = 0 To LenData - 1
+        DataRe(I) = Data(I)
+        DataIm(I) = 0
+    Next
+
+    'FFT実行
+    Call FFT.SetSignalData(DataRe, DataIm)
+    F = FFT.Run()
+    
+    Range("G1") = "周波数 [MHz]"
+    Range("H1") = "FFT 結果"
+    'FFT結果を出力
+    For I = 0 To LenData - 1
+        Range("G2").Offset(I, 0) = FFTbin * (I - LenData / 2) / 1000000
+        If I < LenData / 2 Then
+        '    前半は正の周波数なので後半へ
+            Range("H2").Offset(I + LenData / 2, 0) = 20 * Log(F(I)) / Log(10)
+        Else
+        '   後半は負の周波数なので前半へ
+            Range("H2").Offset(I - LenData / 2, 0) = 20 * Log(F(I)) / Log(10)
+        End If
+    Next
+
+    '///////////////////////////////////////////
+    '  フィルタ 作成
+    '///////////////////////////////////////////
+    Range("AA1") = "FIR フィルタ係数"
+    Range("AB1") = "矩形窓"
+    Range("AC1") = "ハミング窓"
+    Range("AD1") = " ハニング窓"
+    Dim FIR_len, FIR_rec(), FIR_hamming(), FIR_hanning()  As Double
+    FIR_len = Range("B6")
+    ReDim FIR_rec(FIR_len - 1), FIR_hamming(FIR_len - 1), FIR_hanning(FIR_len - 1)
+    
+   Range("AA2:AH5000").Clear
+    
+    ' カットオフ角周波数
+    Dim omega_c As Double
+    omega_c = 2 * Pi * Range("B7") * 1000000 / fs
+    Debug.Print "omega_c: " & omega_c
+    
+    For I = 0 To FIR_len - 1
+        If I <> (FIR_len - 1) / 2 Then
+            FIR_rec(I) = omega_c / Pi * Sin((I - (FIR_len - 1) / 2) * omega_c) / ((I - (FIR_len - 1) / 2) * omega_c)
+        Else
+            FIR_rec(I) = omega_c / Pi
+        End If
+        FIR_hamming(I) = FIR_rec(I) * (0.54 - 0.46 * Cos(2 * Pi * I / (FIR_len - 1)))
+        FIR_hanning(I) = FIR_rec(I) * (0.5 - 0.5 * Cos(2 * Pi * I / (FIR_len - 1)))
+        
+        Range("AA2").Offset(I, 0) = I - (FIR_len - 1) / 2
+        Range("AB2").Offset(I, 0) = FIR_rec(I)
+        Range("AC2").Offset(I, 0) = FIR_hamming(I)
+        Range("AD2").Offset(I, 0) = FIR_hanning(I)
+    Next
+    
+  
+    '///////////////////////////////////////////
+    '   フィルタをかける （矩形窓）
+    '///////////////////////////////////////////
+    Range("I1") = " 矩形窓"
+
+    Dim Data_rec_re, Data_rec_im, tmp As Double
+    ReDim Data_rec_re(LenData - 1), Data_rec_im(LenData - 1)
+    
+    For I = 0 To LenData - 1
+        tmp = 0
+        For j = 0 To FIR_len - 1
+            If I - j >= 0 Then
+                tmp = tmp + FIR_rec(j) * Data(I - j)
+            End If
+        Next
+        Data_rec_re(I) = tmp
+        Data_rec_im(I) = 0
+        Range("I2").Offset(I, 0) = tmp
+    Next
+
+    ' FFT
+    Dim FFT_rec As clsFftBasic
+    Set FFT_rec = New clsFftBasic
+
+    Call FFT_rec.SetSignalData(Data_rec_re, Data_rec_im)
+    f_filtered = FFT_rec.Run()
+
+    Range("J1") = "FFT"
+    For I = 0 To LenData - 1
+    
+        If I < LenData / 2 Then
+        '    前半は正の周波数なので後半へ
+            Range("J2").Offset(I + LenData / 2, 0) = 20 * Log(f_filtered(I) / F(I)) / Log(10)
+'            Range("J2").Offset(I + LenData / 2, 0) = f_filtered(I)
+        Else
+        '   後半は負の周波数なので前半へ
+            Range("J2").Offset(I - LenData / 2, 0) = 20 * Log(f_filtered(I) / F(I)) / Log(10)
+'            Range("J2").Offset(I - LenData / 2, 0) = f_filtered(I)
+        End If
+    Next
+    
+    '///////////////////////////////////////////
+    '   フィルタをかける （ ハミング窓）
+    '///////////////////////////////////////////
+    Range("K1") = "ハミング窓"
+
+    Dim Data_hamming_re(), Data_hamming_im() As Double
+    ReDim Data_hamming_re(LenData - 1), Data_hamming_im(LenData - 1)
+    
+    For I = 0 To LenData - 1
+        tmp = 0
+        For j = 0 To FIR_len - 1
+            If I - j >= 0 Then
+                tmp = tmp + FIR_hamming(j) * Data(I - j)
+            End If
+        Next
+        Data_hamming_re(I) = tmp
+        Data_hamming_im(I) = 0
+        Range("K2").Offset(I, 0) = tmp
+    Next
+
+    ' FFT
+    Dim FFT_hamming As clsFftBasic
+    Set FFT_hamming = New clsFftBasic
+
+    Call FFT_hamming.SetSignalData(Data_hamming_re, Data_hamming_im)
+    f_filtered = FFT_hamming.Run()
+
+    Range("L1") = "FFT"
+    For I = 0 To LenData - 1
+    
+        If I < LenData / 2 Then
+        '    前半は正の周波数なので後半へ
+            Range("L2").Offset(I + LenData / 2, 0) = 20 * Log(f_filtered(I) / F(I)) / Log(10)
+'            Range("J2").Offset(I + LenData / 2, 0) = f_filtered(I)
+        Else
+        '   後半は負の周波数なので前半へ
+            Range("L2").Offset(I - LenData / 2, 0) = 20 * Log(f_filtered(I) / F(I)) / Log(10)
+'            Range("J2").Offset(I - LenData / 2, 0) = f_filtered(I)
+        End If
+    Next
+    
+    '///////////////////////////////////////////
+    '   フィルタをかける （  ハニング窓）
+    '///////////////////////////////////////////
+    Range("M1") = "ハニング窓"
+
+    Dim Data_hanning_re(), Data_hanning_im() As Double
+    ReDim Data_hanning_re(LenData - 1), Data_hanning_im(LenData - 1)
+    
+    For I = 0 To LenData - 1
+        tmp = 0
+        For j = 0 To FIR_len - 1
+            If I - j >= 0 Then
+                tmp = tmp + FIR_hanning(j) * Data(I - j)
+            End If
+        Next
+        Data_hanning_re(I) = tmp
+        Data_hanning_im(I) = 0
+        Range("M2").Offset(I, 0) = tmp
+    Next
+
+    ' FFT
+    Dim FFT_hanning As clsFftBasic
+    Set FFT_hanning = New clsFftBasic
+
+    Call FFT_hanning.SetSignalData(Data_hanning_re, Data_hanning_im)
+    f_hanning = FFT_hanning.Run()
+
+    Range("N1") = "FFT"
+    For I = 0 To LenData - 1
+    
+        If I < LenData / 2 Then
+        '    前半は正の周波数なので後半へ
+            Range("N2").Offset(I + LenData / 2, 0) = 20 * Log(f_hanning(I) / F(I)) / Log(10)
+'            Range("J2").Offset(I + LenData / 2, 0) = f_hanning(I)
+        Else
+        '   後半は負の周波数なので前半へ
+            Range("N2").Offset(I - LenData / 2, 0) = 20 * Log(f_hanning(I) / F(I)) / Log(10)
+'            Range("J2").Offset(I - LenData / 2, 0) = f_hanning(I)
+        End If
+    Next
+End Sub
+
+Private Function RadixCalc(ByVal dataLen As Long) As Long
+    ' dataLen を 越えない2の冪乗を求める
+    Dim rdx As Long
+    Dim temp As Long
+    temp = 1
+    rdx = 0
+    Do While temp <= dataLen
+        temp = temp * 2
+        rdx = rdx + 1
+    Loop
+    RadixCalc = rdx - 1
+End Function
