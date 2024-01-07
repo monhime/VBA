@@ -1,0 +1,219 @@
+' 信号波形を複素ミキシング・デシメーション（フィルタ部分はそのまま）
+
+Sub FFT()
+    Range("D2:Q65538").Clear
+    
+    Debug.Print "ーーーーーーーーーーーーーーーーーーーーーーー"
+
+    '///////////////////////////////////////////
+    '  波形作成
+    '///////////////////////////////////////////
+    Dim Pi As Double
+    Pi = Atn(1) * 4 '円周率
+    
+    Dim f1, f2, fs, Ts  As Double
+    f1 = Range("B2") * 1000000
+    f2 = Range("B3") * 1000000
+    fs = Range("B4") * 1000000
+    Ts = 1 / fs
+    Debug.Print "Ts: " & Ts
+         
+    Dim LenData As Long
+    LenData = Range("B6")
+    
+    Dim Data() As Double
+    ReDim Data(LenData - 1)
+    
+    Range("D1") = "サンプル番号"
+    Range("E1") = "サンプル信号"
+    
+    For I = 0 To LenData - 1
+        Range("D2").Offset(I, 0) = I
+        Randomize
+        Data(I) = 0.9 * Cos(2 * Pi * f1 * Ts * I) + Sin(2 * Pi * f2 * Ts * I) + (Rnd - 0.5) * 0.01
+    Next
+
+    For I = 0 To LenData - 1
+        Range("E2").Offset(I, 0) = Data(I)
+    Next
+         
+    '///////////////////////////////////////////
+    ' FFT
+    '///////////////////////////////////////////
+    
+    Dim FFTbin As Double
+    FFTbin = fs / LenData
+    Debug.Print "FFT ビン: " & FFTbin / 1000000 & " MHz"
+    
+    Dim FFT As clsFftBasic
+    Set FFT = New clsFftBasic
+    
+    Dim DataRe(), DataIm() As Double
+    ReDim DataRe(LenData - 1), DataIm(LenData - 1)
+    'FFTに入力するデータをシートから取得
+    For I = 0 To LenData - 1
+        DataRe(I) = Data(I)
+        DataIm(I) = 0
+    Next
+    
+    'FFT実行
+    Call FFT.SetSignalData(DataRe, DataIm)
+    f = FFT.Run()
+    Debug.Print "Size of f: " & UBound(f) + 1
+    Range("F1") = "周波数 [MHz]"
+    Range("G1") = "FFT 結果"
+    'FFT結果をセルに出力
+    For I = 0 To LenData - 1
+        Range("F2").Offset(I, 0) = FFTbin * (I - LenData / 2) / 1000000
+        If I < LenData / 2 Then
+        '    前半は正の周波数なので後半へ
+            Range("G2").Offset(I + LenData / 2, 0) = 20 * Log(f(I)) / Log(10)
+        Else
+        '   後半は負の周波数なので前半へ
+            Range("G2").Offset(I - LenData / 2, 0) = 20 * Log(f(I)) / Log(10)
+        End If
+    Next
+    
+     '///////////////////////////////////////////
+    ' 複素ミキシング
+    '///////////////////////////////////////////
+    Dim f_nco As Double
+    f_nco = Range("B8") * 1000000
+    
+    Range("H1") = "Ich  複素ミキシング後"
+    Range("I1") = "Qch  複素ミキシング後"
+
+    Dim Ich(), Qch() As Double
+    ReDim Ich(LenData - 1), Qch(LenData - 1)
+    For I = 0 To LenData - 1
+        Ich(I) = DataRe(I) * Cos(2 * Pi * f_nco * Ts * I)
+        Qch(I) = DataRe(I) * -Sin(2 * Pi * f_nco * Ts * I)
+        Range("H2").Offset(I, 0) = Ich(I)
+        Range("I2").Offset(I, 0) = Qch(I)
+    Next
+
+    'FFT
+    Dim FFT_mixed As clsFftBasic
+    Set FFT_mixed = New clsFftBasic
+    'FFT実行
+    Call FFT_mixed.SetSignalData(Ich, Qch)
+    f_mixed = FFT_mixed.Run()
+        'FFT結果をセルに出力
+    Range("J1") = "FFT"
+    For I = 0 To LenData - 1
+        Range("F2").Offset(I, 0) = FFTbin * (I - LenData / 2) / 1000000
+        If I < LenData / 2 Then
+        '    前半は正の周波数なので後半へ
+            Range("J2").Offset(I + LenData / 2, 0) = 20 * Log(f_mixed(I)) / Log(10)
+        Else
+        '   後半は負の周波数なので前半へ
+            Range("J2").Offset(I - LenData / 2, 0) = 20 * Log(f_mixed(I)) / Log(10)
+        End If
+    Next
+    
+    '///////////////////////////////////////////
+    '  フィルタ
+    '///////////////////////////////////////////
+    
+    Range("K1") = "Ich  フィルタ後"
+    Range("L1") = "Qch  フィルタ後"
+ 
+    Dim Ich_filtered(), Qch_filtered() As Double
+    ReDim Ich_filtered(LenData - 1), Qch_filtered(LenData - 1)
+    For I = 0 To LenData - 1
+        Ich_filtered(I) = Ich(I)
+        Qch_filtered(I) = Qch(I)
+        Range("K2").Offset(I, 0) = Ich_filtered(I)
+        Range("L2").Offset(I, 0) = Qch_filtered(I)
+    Next
+    
+    ' FFT
+    Dim FFT_filtered As clsFftBasic
+    Set FFT_filtered = New clsFftBasic
+
+    Call FFT_filtered.SetSignalData(Ich_filtered, Qch_filtered)
+    f_filtered = FFT_filtered.Run()
+
+    Range("M1") = "FFT"
+    For I = 0 To LenData - 1
+        If I < LenData / 2 Then
+        '    前半は正の周波数なので後半へ
+            Range("M2").Offset(I + LenData / 2, 0) = 20 * Log(f_filtered(I)) / Log(10)
+        Else
+        '   後半は負の周波数なので前半へ
+            Range("M2").Offset(I - LenData / 2, 0) = 20 * Log(f_filtered(I)) / Log(10)
+        End If
+    Next
+    
+    
+    '///////////////////////////////////////////
+    '  デシメーション
+    '///////////////////////////////////////////
+    '  デシメーション後のサンプリング周波数
+    Dim fs_decimated As Double
+    fs_decimated = Range("B9") * 1000000
+     
+    ' デシメーションレートを求める
+    Dim DecimateRate As Long
+    DecimateRate = Round(fs / fs_decimated)
+    Debug.Print "DecimateRate: " & DecimateRate
+    
+     '  デシメーション 後の長さを求める
+     Dim LenData_decimated As Long
+     Dim LenData_decimated_radix As Integer
+    LenData_decimated_radix = RadixCalc(LenData / DecimateRate)
+    LenData_decimated = 2 ^ LenData_decimated_radix
+    Debug.Print "LenDa ta_decimated: " & LenData_decimated
+    
+    '波形作成
+    Dim Ich_decimated(), Qch_decimated() As Double
+    ReDim Ich_decimated(LenData_decimated - 1), Qch_decimated(LenData_decimated - 1)
+     Range("N1") = "Ich　デシメーション後 "
+     Range("O1") = "Qch　デシメーション後 "
+     
+    For I = 0 To LenData_decimated - 1
+        Ich_decimated(I) = Ich(DecimateRate * I)
+        Qch_decimated(I) = Qch(DecimateRate * I)
+       
+        Range("N2").Offset(I, 0) = Ich_decimated(I)
+        Range("O2").Offset(I, 0) = Qch_decimated(I)
+    Next
+     
+     ' FFT
+    Dim FFTbin_decimated As Double
+    FFTbin_decimated = fs_decimated / LenData_decimated
+    Debug.Print "FFT ビン（デシメーション後）: " & FFTbin_decimated
+    
+    Dim FFT_decimated As clsFftBasic
+    Set FFT_decimated = New clsFftBasic
+
+    Call FFT_decimated.SetSignalData(Ich_decimated, Qch_decimated)
+    f_decimated = FFT_decimated.Run()
+
+    Range("P1") = "周波数 [MHz]"
+    Range("Q1") = "FFT_decimated"
+    For I = 0 To LenData_decimated - 1
+        Range("P2").Offset(I, 0) = FFTbin_decimated * (I - LenData_decimated / 2) / 1000000
+        If I < LenData_decimated / 2 Then
+        '    前半は正の周波数なので後半へ
+            Range("Q2").Offset(I + LenData_decimated / 2, 0) = 20 * Log(f_decimated(I)) / Log(10)
+        Else
+        '   後半は負の周波数なので前半へ
+            Range("Q2").Offset(I - LenData_decimated / 2, 0) = 20 * Log(f_decimated(I)) / Log(10)
+        End If
+    Next
+    
+End Sub
+
+Private Function RadixCalc(ByVal dataLen As Long) As Long
+    ' dataLen を 越えない2の冪乗を求める
+    Dim rdx As Long
+    Dim temp As Long
+    temp = 1
+    rdx = 0
+    Do While temp <= dataLen
+        temp = temp * 2
+        rdx = rdx + 1
+    Loop
+    RadixCalc = rdx - 1
+End Function
